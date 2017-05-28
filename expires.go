@@ -98,7 +98,7 @@ type expiresHandler struct {
 func (h expiresHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) (int, error) {
 	for _, rule := range h.Rules {
 		if rule.Re.MatchString(r.URL.Path) {
-			w.Header().Set("Expires", time.Now().Add(rule.Duration).Format(time.RFC1123))
+			w.Header().Set("Expires", time.Now().Add(rule.Duration).UTC().Format(time.RFC1123))
 			break
 		}
 	}
