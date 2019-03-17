@@ -11,8 +11,57 @@ import (
 )
 
 type matchDef struct {
-	Re       *regexp.Regexp
-	Duration time.Duration
+	re       *regexp.Regexp
+	duration time.Duration
+}
+
+func (m *matchDef) Match(header http.Header, request *http.Request) bool {
+	return m.re.MatchString(request.URL.Path)
+}
+
+func (m *matchDef) Duration() time.Duration {
+	return m.duration
+}
+
+func (m *matchDef) Parse(args []string) error {
+	re, err := regexp.Compile(args[0])
+	if err != nil {
+		return err
+	}
+	m.re = re
+	m.duration = parseDuration(args[1])
+	return nil
+}
+
+type headerMatchDef struct {
+	header   string
+	re       *regexp.Regexp
+	duration time.Duration
+}
+
+func (m *headerMatchDef) Match(header http.Header, request *http.Request) bool {
+	return m.re.MatchString(header.Get(m.header))
+}
+
+func (m *headerMatchDef) Duration() time.Duration {
+	return m.duration
+}
+
+func (m *headerMatchDef) Parse(args []string) error {
+	m.header = args[0]
+	re, err := regexp.Compile(args[1])
+	if err != nil {
+		return err
+	}
+	m.re = re
+	m.duration = parseDuration(args[2])
+	return nil
+}
+
+type matchRule interface {
+	Duration() time.Duration
+	Match(http.Header, *http.Request) bool
+	Parse([]string) error
 }
 
 func init() {
@@ -37,26 +86,31 @@ func setup(c *caddy.Controller) error {
 	return nil
 }
 
-func parseRules(c *caddy.Controller) ([]*matchDef, error) {
-	rules := []*matchDef{}
+func parseRules(c *caddy.Controller) ([]matchRule, error) {
+	rules := []matchRule{}
 
 	for c.Next() {
 		for c.NextBlock() {
-			if c.Val() != "match" {
+			switch c.Val() {
+			case "match":
+				args := c.RemainingArgs()
+				if len(args) != 2 {
+					return nil, c.ArgErr()
+				}
+				rule := &matchDef{}
+				rule.Parse(args)
+				rules = append(rules, rule)
+			case "match_header":
+				args := c.RemainingArgs()
+				if len(args) != 3 {
+					return nil, c.ArgErr()
+				}
+				rule := &headerMatchDef{}
+				rule.Parse(args)
+				rules = append(rules, rule)
+			default:
 				return nil, c.SyntaxErr("match")
 			}
-			args := c.RemainingArgs()
-			if len(args) != 2 {
-				return nil, c.ArgErr()
-			}
-			re, err := regexp.Compile(args[0])
-			if err != nil {
-				return nil, err
-			}
-			duration := parseDuration(args[1])
-			rule := &matchDef{Re: re, Duration: duration}
-
-			rules = append(rules, rule)
 		}
 	}
 	return rules, nil
@@ -92,14 +146,14 @@ func parseInt64(value string) int64 {
 
 type expiresHandler struct {
 	Next  httpserver.Handler
-	Rules []*matchDef
+	Rules []matchRule
 }
 
 func (h expiresHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) (int, error) {
 	for _, rule := range h.Rules {
-		if rule.Re.MatchString(r.URL.Path) {
-			w.Header().Set("Expires", time.Now().Add(rule.Duration).UTC().Format(time.RFC1123))
-			w.Header().Set("Cache-Control", "public, max-age="+strconv.Itoa(int(rule.Duration.Seconds())))
+		if rule.Match(w.Header(), r) {
+			w.Header().Set("Expires", time.Now().Add(rule.Duration()).UTC().Format(time.RFC1123))
+			w.Header().Set("Cache-Control", "public, max-age="+strconv.Itoa(int(rule.Duration().Seconds())))
 			break
 		}
 	}

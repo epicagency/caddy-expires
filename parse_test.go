@@ -1,6 +1,8 @@
 package expires
 
 import (
+	"net/http"
+	"net/url"
 	"testing"
 	"time"
 
@@ -15,6 +17,7 @@ func TestParseBlock(t *testing.T) {
 		match .*\.css 1h
 		match .*\.js 1i
 		match .*\.txt 1s
+		match_header Content-Type .*json 1d
 	}`
 
 	c := caddy.NewTestController("http", conf)
@@ -23,17 +26,61 @@ func TestParseBlock(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(rules) != 6 {
-		t.Fatalf("Wrong rules count %d expected 6", len(rules))
+	if len(rules) != 7 {
+		t.Fatalf("Wrong rules count %d expected 7", len(rules))
 	}
 
 	for i, rule := range rules {
-		if rule.Re == nil {
-			t.Fatalf("Empty rule %d", i)
+		if rule.Duration() == 0 {
+			t.Fatalf("Incorrect duration for %d", i)
 		}
-		if rule.Duration == 0 {
-			t.Fatalf("Incorrect duration for %d: %s", i, rule.Re.String())
-		}
+	}
+}
+
+func TestMatchPath(t *testing.T) {
+	rule := matchDef{}
+	rule.Parse([]string{".*\\.jpg", "1y"})
+
+	header := http.Header{}
+	header.Set("Content-Type", "image/jpeg")
+
+	request := &http.Request{}
+	request.URL, _ = url.Parse("http://www.example.com/image.jpg")
+
+	if !rule.Match(header, request) {
+		t.Fatalf("Expected %s to match %v", request.URL.Path, rule.re)
+	}
+
+	request.URL, _ = url.Parse("http://www.example.com/config.json")
+
+	if rule.Match(header, request) {
+		t.Fatalf("Expected %s to NOT match %v", request.URL.Path, rule.re)
+	}
+}
+
+func TestMatchHeader(t *testing.T) {
+	rule := headerMatchDef{}
+	rule.Parse([]string{"Content-Type", ".+/.*json", "1y"})
+
+	request := &http.Request{}
+	request.URL, _ = url.Parse("http://www.example.com/config.json")
+
+	header := http.Header{}
+
+	if rule.Match(header, request) {
+		t.Fatalf("Unset header should'nt match %v", rule.re)
+	}
+
+	header.Set("Content-Type", "application/json")
+
+	if !rule.Match(header, request) {
+		t.Fatalf("Expected %s to match %v", header.Get("Content-Type"), rule.re)
+	}
+
+	header.Set("Content-Type", "application/javascript")
+
+	if rule.Match(header, request) {
+		t.Fatalf("Expected %s to NOT match %v", header.Get("Content-Type"), rule.re)
 	}
 }
 
