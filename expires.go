@@ -99,6 +99,7 @@ func (h expiresHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) (int, 
 	for _, rule := range h.Rules {
 		if rule.Re.MatchString(r.URL.Path) {
 			w.Header().Set("Expires", time.Now().Add(rule.Duration).UTC().Format(time.RFC1123))
+			w.Header().Set("Cache-Control", "public, max-age="+strconv.Itoa(int(rule.Duration.Seconds())))
 			break
 		}
 	}
